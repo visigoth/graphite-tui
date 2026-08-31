@@ -16,6 +16,7 @@ interface Props {
   /** Which label each row shows: PR title, branch name, or both. */
   labelMode: LabelMode;
   /** Builds a Graphite URL for a PR number; null when there's no remote. */
+  prUrl: ((prNumber: number) => string) | null;
   /** First visible branch row. */
   scrollOffset: number;
   /** Number of branch rows that fit. */
@@ -34,6 +35,7 @@ export function StackGraph({
   width,
   titleWidth,
   labelMode,
+  prUrl,
   scrollOffset,
   visible,
   conflictedBranches,
@@ -85,6 +87,7 @@ export function StackGraph({
             width={width}
             titleWidth={titleWidth}
             labelMode={labelMode}
+            prUrl={prUrl ?? undefined}
             prW={prW}
             statusW={statusW}
             ageW={ageW}

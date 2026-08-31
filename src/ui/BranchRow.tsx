@@ -9,6 +9,7 @@ import type {
 } from "../types.js";
 import { buildGutter } from "./graph.js";
 import { ciBadge, colors, prBadge, selectionBg } from "./theme.js";
+import { link, stripLinks } from "./hyperlink.js";
 
 interface Props {
   row: RenderRow;
@@ -23,6 +24,7 @@ interface Props {
   /** Which label to show: PR title, branch name, or both. Defaults to `title`. */
   labelMode?: LabelMode;
   /** Builds the Graphite URL for a PR number; omitted when there's no remote. */
+  prUrl?: (prNumber: number) => string;
   /** Fixed widths for the right-aligned CI, PR#, status, and age columns. */
   prW: number;
   statusW: number;
@@ -46,9 +48,15 @@ interface Segment {
   bold?: boolean;
 }
 
-/** Display width: each emoji (💬) renders two columns; everything else one. */
+/**
+ * Display width: each emoji (💬) renders two columns; everything else one.
+ *
+ * Hyperlink escapes are stripped first — they occupy zero columns, and counting
+ * them would push the right-aligned metadata off the row and make Ink wrap it.
+ */
 function segWidth(text: string): number {
-  return [...text].length + (text.includes("💬") ? 1 : 0);
+  const plain = stripLinks(text);
+  return [...plain].length + (plain.includes("💬") ? 1 : 0);
 }
 
 /** Truncate or right-pad `text` to exactly `w` display columns. */
@@ -66,6 +74,7 @@ export function BranchRow({
   width,
   titleWidth,
   labelMode = "title",
+  prUrl,
   prW,
   statusW,
   ageW,
@@ -141,8 +150,12 @@ export function BranchRow({
     });
   }
   if (prW > 0) {
-    const pr = branch.pr ? `#${branch.pr.prNumber}` : "";
-    meta.push({ text: ` ${pr.padStart(prW)}`, color: colors.prNumber });
+    const n = branch.pr?.prNumber;
+    const pr = n ? `#${n}` : "";
+    meta.push({
+      text: ` ${link(pr.padStart(prW), n && prUrl ? prUrl(n) : null)}`,
+      color: colors.prNumber,
+    });
   }
   if (statusW > 0) {
     meta.push({

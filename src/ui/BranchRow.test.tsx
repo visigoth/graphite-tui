@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 import type { Branch, RenderRow } from "../types.js";
 import { BranchRow } from "./BranchRow.js";
+import { applyHyperlinks } from "./hyperlink.js";
 
 const ANSI = new RegExp(String.fromCharCode(27) + "\\[[0-9;]*m", "g");
+const OSC8 = /\u001B\]8;;[^\u0007]*\u0007/g;
 
 const branch = (over: Partial<Branch> = {}): Branch => ({
   name: "feature",
@@ -147,6 +149,33 @@ describe("BranchRow", () => {
   it("links the PR number without disturbing the column layout", () => {
     // Links are off unless stdout is a terminal, which it never is under the
     // test runner — opt in explicitly.
+    process.env.GRAPHITE_TUI_LINKS = "1";
+    applyHyperlinks();
+    // The escape sequence occupies zero columns, so the rendered row must be
+    // byte-for-byte identical once the link is stripped back out.
+    const prUrl = (n: number) => `https://app.graphite.test/pr/${n}`;
+    const plain = label({ ...base });
+    const linked = label({ ...base, prUrl });
+
+    expect(linked).toContain("app.graphite.test/pr/10007");
+    expect(linked.split(ANSI).join("").replace(OSC8, "")).toBe(plain);
+  });
+
+  it("emits no link for a branch without a PR", () => {
+    process.env.GRAPHITE_TUI_LINKS = "1";
+    applyHyperlinks();
+    const noPr = row({ branch: branch({ pr: null, displayTitle: "feature" }) });
+    const out = label({
+      ...base,
+      row: noPr,
+      prUrl: (n: number) => `https://app.graphite.test/pr/${n}`,
+    });
+    expect(out).not.toContain("app.graphite.test");
+    delete process.env.GRAPHITE_TUI_LINKS;
+    applyHyperlinks();
+  });
+
+  it("never wraps in any label mode, at any width", () => {
     for (const labelMode of ["title", "branch", "both"] as const) {
       for (const width of [121, 100, 80, 60, 45, 30]) {
         const out = lines(

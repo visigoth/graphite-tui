@@ -65,6 +65,24 @@ export function graphitePrUrl(
   return `https://app.graphite.com/${path}/${repo.owner}/${repo.name}/${prNumber}`;
 }
 
+/**
+ * A `prNumber -> Graphite URL` function, or null when there's no parseable
+ * remote.
+ *
+ * `graphitePrUrl` re-runs `git remote get-url` on every call, which is fine for
+ * a keypress but not for a per-row render. Resolving the remote once and
+ * returning a closure lets callers build a URL for every visible branch without
+ * spawning a subprocess each time.
+ */
+export function graphitePrUrlFor(
+  repoRoot: string
+): ((prNumber: number) => string) | null {
+  const repo = getRemoteOwnerRepo(repoRoot);
+  if (!repo) return null;
+  return (prNumber) =>
+    `https://app.graphite.com/github/pr/${repo.owner}/${repo.name}/${prNumber}`;
+}
+
 /** Current checked-out branch, or null if detached HEAD. */
 export function getCurrentBranch(repoRoot: string): string | null {
   try {

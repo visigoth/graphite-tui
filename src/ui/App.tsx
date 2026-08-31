@@ -25,6 +25,7 @@ import {
   getCommitMessage,
   githubPrUrl,
   graphitePrUrl,
+  graphitePrUrlFor,
 } from "../data/git.js";
 import { getChangedFiles } from "../data/files.js";
 import { getWorkingStatus } from "../data/status.js";
@@ -180,6 +181,13 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
   const [commitScroll, setCommitScroll] = useState(0);
   // Resolve the remote once: graphitePrUrl shells out to git on every
   // call, which is far too expensive to do per row per render.
+  const prUrl = useMemo(
+    () => graphitePrUrlFor(data.repoRoot),
+    [data.repoRoot]
+  );
+
+  // `q` quits behind a confirmation; `Q` still quits outright. Defined once
+  // so every panel raises the same prompt.
   const confirmQuit = () => {
     const details: DetailLine[] = [
       { label: "Repo", value: data.repoRoot.split("/").pop() ?? data.repoRoot },
@@ -1518,6 +1526,7 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
           width={contentWidth}
           titleWidth={titleWidth}
           labelMode={labelMode}
+          prUrl={prUrl}
           scrollOffset={branchOffset}
           visible={branchVisible}
           conflictedBranches={conflictedBranches}

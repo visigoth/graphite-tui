@@ -34,11 +34,14 @@ async function main() {
       `graphite-tui — keyboard-driven TUI for Graphite PR stacks\n\n` +
         `Usage: graphite-tui [--light | --dark]\n` +
         `                    [--pr-titles | --branch-names | --both-labels]\n` +
+        `                    [--no-links] [--debug-dump]\n\n` +
         `Colors auto-detect the terminal background. Force a palette with\n` +
         `--light / --dark or GRAPHITE_TUI_THEME=light|dark.\n\n` +
         `Branch rows are labelled with the PR title by default. Start on the\n` +
         `branch name with --branch-names, or show both with --both-labels\n` +
         `(also GRAPHITE_TUI_LABEL=title|branch|both). Press N to cycle.\n\n` +
+        `PR numbers are clickable links to Graphite in terminals that\n` +
+        `support OSC 8. Disable with --no-links or GRAPHITE_TUI_LINKS=0.\n\n` +
         `Run inside a Graphite-initialized git repo. Keys: ?  for help.\n`
     );
     return;
@@ -92,6 +95,11 @@ async function main() {
   const { detectTheme } = await import("./ui/detectTheme.js");
   const { applyTheme } = await import("./ui/theme.js");
   applyTheme(await detectTheme(args));
+  // Resolve hyperlink support before the first render, for the same
+  // reason as the palette: it is a property of the terminal we are
+  // about to draw into.
+  const { applyHyperlinks } = await import("./ui/hyperlink.js");
+  applyHyperlinks(args);
 
   const { render } = await import("ink");
   const React = await import("react");
