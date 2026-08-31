@@ -16,7 +16,8 @@ const GLOBAL_KEYS: [string, string][] = [
 ];
 
 const KEYS: [string, string][] = [
-  ["↵ or c", "checkout branch"],
+  ["↵", "show the branch tip's full commit message"],
+  ["c", "checkout branch"],
   ["o / O", "open PR / stack on Graphite"],
   ["g", "open PR on GitHub"],
   ["G", "get a remote branch/stack (gt get)"],

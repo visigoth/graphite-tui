@@ -195,3 +195,34 @@ export function getBranchAges(repoRoot: string): Map<string, string> {
   }
   return ages;
 }
+
+/**
+ * Full `git show -s` text for a branch's tip commit: hash, author, date, and
+ * the complete message body. Branch rows carry only a one-line label, so this
+ * is the only place the commit's own prose is readable.
+ *
+ * `--decorate=short` is passed explicitly rather than left to git's default:
+ * `log.decorate=auto` renders refs only when stdout is a terminal, and we
+ * capture stdout through a pipe, so the default would silently drop them. The
+ * decoration is worth keeping — it names every ref at this commit, so a branch
+ * sharing a tip with its parent or with `origin/` is visible at a glance.
+ *
+ * The trailing `--` disambiguates the ref from a path of the same name, which
+ * matters for branch names like `docs` or `main`.
+ */
+export function getCommitMessage(
+  repoRoot: string,
+  rev: string
+): string | null {
+  try {
+    const { stdout } = execaSync(
+      "git",
+      ["show", "-s", "--decorate=short", "--no-color", rev, "--"],
+      { cwd: repoRoot }
+    );
+    const text = stdout.trimEnd();
+    return text.length ? text : null;
+  } catch {
+    return null;
+  }
+}

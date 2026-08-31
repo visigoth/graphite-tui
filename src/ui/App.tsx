@@ -21,7 +21,11 @@ import { LABEL_MODES } from "../types.js";
 import type { WorkingFile } from "../data/status.js";
 import type { RepoPaths } from "../data/repo.js";
 import { loadRepoData } from "../data/load.js";
-import { githubPrUrl, graphitePrUrl } from "../data/git.js";
+import {
+  getCommitMessage,
+  githubPrUrl,
+  graphitePrUrl,
+} from "../data/git.js";
 import { getChangedFiles } from "../data/files.js";
 import { getWorkingStatus } from "../data/status.js";
 import { getBranchFileDiff, getWorktreeFileDiff } from "../data/diff.js";
@@ -39,6 +43,7 @@ import { CommandLog, flattenLog } from "./CommandLog.js";
 import { StatusBar } from "./StatusBar.js";
 import { HelpOverlay, helpLineCount, helpVisibleRows } from "./HelpOverlay.js";
 import { ErrorOverlay } from "./ErrorOverlay.js";
+import { CommitOverlay } from "./CommitOverlay.js";
 import { ConfirmOverlay } from "./ConfirmOverlay.js";
 import { InputOverlay } from "./InputOverlay.js";
 import { DiffOverlay, diffVisibleRows } from "./DiffOverlay.js";
@@ -66,7 +71,8 @@ type Mode =
   | "copy"
   | "error"
   | "input"
-  | "diff";
+  | "diff"
+  | "commit";
 
 
 /**
@@ -166,6 +172,16 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
   // Full output of the last failed command, viewable via the error overlay.
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [errorScroll, setErrorScroll] = useState(0);
+  // Tip-commit message of the branch `↵` was pressed on, plus its scroll.
+  const [commitView, setCommitView] = useState<{
+    branch: string;
+    text: string | null;
+  } | null>(null);
+  const [commitScroll, setCommitScroll] = useState(0);
+  // Resolve the remote once: graphitePrUrl shells out to git on every
+  // call, which is far too expensive to do per row per render.
+  // + spacer(2) + footer(1), matching CommitOverlay's own layout.
+  const commitVisibleRows = Math.max(3, (stdout?.rows ?? 24) - 9);
   const [helpScroll, setHelpScroll] = useState(0);
   const [query, setQuery] = useState("");
 
@@ -693,6 +709,23 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
       }
       return;
     }
+    if (mode === "commit") {
+      const vis = commitVisibleRows;
+      const lineCount = commitView?.text
+        ? commitView.text.split("\n").length
+        : 0;
+      const max = Math.max(0, lineCount - vis);
+      if (key.escape || input === "q") {
+        setMode("normal");
+        setCommitView(null);
+      } else if (key.upArrow || input === "k") {
+        setCommitScroll((s) => Math.max(0, s - 1));
+      } else if (key.downArrow || input === "j" || input === " ") {
+        const step = input === " " ? Math.max(1, Math.floor(vis / 2)) : 1;
+        setCommitScroll((s) => Math.min(max, s + step));
+      }
+      return;
+    }
     if (mode === "diff") {
       if (key.escape || input === "q") {
         setMode("normal");
@@ -1090,10 +1123,25 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
       if (key.downArrow && selected >= rows.length - 1 && below)
         enterFocus(below, true);
       else setSelected((s) => Math.min(rows.length - 1, s + 1));
-    } else if (key.return || input === "c") {
+    } else if (input === "c") {
       if (selectedRow) {
         const name = selectedRow.branch.name;
         runAction(`checking out ${name}`, () => gt.checkout(data.repoRoot, name));
+      }
+    } else if (key.return) {
+      // Show the branch tip's full commit message. Reading a branch is the
+      // common move when scanning a stack, so it gets the cheapest key;
+      // checkout mutates the working tree, so it keeps the explicit `c`.
+      if (selectedRow) {
+        setCommitView({
+          branch: selectedRow.branch.name,
+          // Resolve the branch name rather than the cached revision: git
+          // gives the live tip, and gt's cached SHA can lag a local commit
+          // (and is null for branches it has not recorded one for).
+          text: getCommitMessage(data.repoRoot, selectedRow.branch.name),
+        });
+        setCommitScroll(0);
+        setMode("commit");
       }
     } else if (input === "o") {
       openGraphitePr(false, "opening PR");
@@ -1197,6 +1245,16 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
       }
     }
   });
+
+  if (mode === "commit" && commitView)
+    return (
+      <CommitOverlay
+        branch={commitView.branch}
+        text={commitView.text}
+        scrollOffset={commitScroll}
+        visible={commitVisibleRows}
+      />
+    );
 
   if (mode === "error" && errorDetail)
     return (
