@@ -180,6 +180,29 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
   const [commitScroll, setCommitScroll] = useState(0);
   // Resolve the remote once: graphitePrUrl shells out to git on every
   // call, which is far too expensive to do per row per render.
+  const confirmQuit = () => {
+    const details: DetailLine[] = [
+      { label: "Repo", value: data.repoRoot.split("/").pop() ?? data.repoRoot },
+    ];
+    if (data.currentBranch)
+      details.push({ label: "On branch", value: data.currentBranch });
+    const consequences: string[] = [];
+    // The one piece of state that outlives the TUI and needs finishing by hand.
+    if (data.rebase?.branch)
+      consequences.push(
+        `A paused rebase on ${data.rebase.branch} stays paused — finish it with gt continue.`
+      );
+    setPendingConfirm({
+      title: "Quit graphite-tui?",
+      details,
+      consequences,
+      confirmLabel: "Quit",
+      run: () => exit(),
+    });
+    setMode("confirm");
+  };
+
+  // Body rows the commit overlay fits: border(2) + paddingY(2) + header(1)
   // + spacer(2) + footer(1), matching CommitOverlay's own layout.
   const commitVisibleRows = Math.max(3, (stdout?.rows ?? 24) - 9);
   const [helpScroll, setHelpScroll] = useState(0);
@@ -879,6 +902,8 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
         setFocus("branches");
       } else if (key.tab) {
         goFocus(nextFocus("worktree", shownPanels));
+      } else if (input === "q") {
+        confirmQuit();
       } else if (input === "Q" || (key.ctrl && input === "c")) {
         exit();
       } else if (key.return) {
@@ -1026,6 +1051,8 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
         setFocus("branches");
       } else if (key.tab) {
         goFocus(nextFocus("files", shownPanels));
+      } else if (input === "q") {
+        confirmQuit();
       } else if (input === "Q" || (key.ctrl && input === "c")) {
         exit();
       } else if (key.return) {
@@ -1055,6 +1082,8 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
     if (focus === "logs") {
       if (key.tab || key.escape) {
         setFocus("branches");
+      } else if (input === "q") {
+        confirmQuit();
       } else if (input === "Q" || (key.ctrl && input === "c")) {
         exit();
       } else if (input === "c") {
@@ -1109,6 +1138,10 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
     }
 
     // normal mode
+    if (input === "q") {
+      confirmQuit();
+      return;
+    }
     if (input === "Q" || (key.ctrl && input === "c")) {
       exit();
       return;
