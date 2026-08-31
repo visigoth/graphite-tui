@@ -1,10 +1,24 @@
 #!/usr/bin/env node
 import { loadRepoData } from "./data/load.js";
+import type { LabelMode } from "./types.js";
 import { buildRenderRows } from "./model/tree.js";
 import {
   NotAGitRepoError,
   NotAGraphiteRepoError,
 } from "./data/repo.js";
+
+/**
+ * Which label the branch list starts on. Mirrors the theme override chain:
+ * an explicit flag beats GRAPHITE_TUI_LABEL, which beats the default.
+ */
+function labelModeFrom(argv: string[]): LabelMode {
+  if (argv.includes("--branch-names")) return "branch";
+  if (argv.includes("--pr-titles")) return "title";
+  if (argv.includes("--both-labels")) return "both";
+  const env = process.env.GRAPHITE_TUI_LABEL?.trim().toLowerCase();
+  if (env === "branch" || env === "title" || env === "both") return env;
+  return "title";
+}
 
 function fail(message: string): never {
   process.stderr.write(`graphite-tui: ${message}\n`);
@@ -18,9 +32,13 @@ async function main() {
   if (args.includes("--help") || args.includes("-h")) {
     process.stdout.write(
       `graphite-tui — keyboard-driven TUI for Graphite PR stacks\n\n` +
-        `Usage: graphite-tui [--light | --dark] [--debug-dump]\n\n` +
+        `Usage: graphite-tui [--light | --dark]\n` +
+        `                    [--pr-titles | --branch-names | --both-labels]\n` +
         `Colors auto-detect the terminal background. Force a palette with\n` +
         `--light / --dark or GRAPHITE_TUI_THEME=light|dark.\n\n` +
+        `Branch rows are labelled with the PR title by default. Start on the\n` +
+        `branch name with --branch-names, or show both with --both-labels\n` +
+        `(also GRAPHITE_TUI_LABEL=title|branch|both). Press N to cycle.\n\n` +
         `Run inside a Graphite-initialized git repo. Keys: ?  for help.\n`
     );
     return;
@@ -96,7 +114,11 @@ async function main() {
   process.on("exit", leaveAltScreen);
 
   const app = render(
-    React.createElement(App, { initial: loaded.data, paths: loaded.paths })
+    React.createElement(App, {
+      initial: loaded.data,
+      paths: loaded.paths,
+      initialLabelMode: labelModeFrom(args),
+    })
   );
   try {
     await app.waitUntilExit();

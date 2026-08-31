@@ -10,6 +10,7 @@ const GLOBAL_KEYS: [string, string][] = [
   ["s", "sync with trunk"],
   ["R", "refresh"],
   ["t", "toggle light / dark theme"],
+  ["N", "cycle label: PR title / branch name / both"],
   ["?", "toggle this help"],
   ["Q", "quit"],
 ];

@@ -2,6 +2,7 @@ import React from "react";
 import { Box, Text } from "ink";
 import type {
   CiStatus,
+  LabelMode,
   PrLiveStatus,
   RenderRow,
   ReviewThreadCounts,
@@ -19,6 +20,9 @@ interface Props {
   width: number;
   /** Max width available for the title column. */
   titleWidth: number;
+  /** Which label to show: PR title, branch name, or both. Defaults to `title`. */
+  labelMode?: LabelMode;
+  /** Builds the Graphite URL for a PR number; omitted when there's no remote. */
   /** Fixed widths for the right-aligned CI, PR#, status, and age columns. */
   prW: number;
   statusW: number;
@@ -61,6 +65,7 @@ export function BranchRow({
   focused,
   width,
   titleWidth,
+  labelMode = "title",
   prW,
   statusW,
   ageW,
@@ -161,10 +166,20 @@ export function BranchRow({
   const titleCols = Math.max(0, Math.min(titleWidth, width - gutterWidth - metaWidth));
   const spacerWidth = Math.max(0, width - gutterWidth - titleCols - metaWidth);
 
-  const title = fit(
-    `${branch.displayTitle}${branch.isTrunk ? " (trunk)" : ""}`,
-    titleCols
-  );
+  // The label column is one or two segments. `both` puts the branch name first
+  // (it's the identifier you act on) and dims the PR title after it; the title
+  // is dropped entirely when it would just repeat the name, which is the case
+  // for every branch without a PR since displayTitle falls back to the name.
+  const primaryRaw =
+    (labelMode === "title" ? branch.displayTitle : branch.name) +
+    (branch.isTrunk ? " (trunk)" : "");
+  const secondaryRaw =
+    labelMode === "both" && branch.displayTitle !== branch.name
+      ? `  ${branch.displayTitle}`
+      : "";
+  const primaryCols = Math.min([...primaryRaw].length, titleCols);
+  const title = fit(primaryRaw, primaryCols);
+  const subtitle = fit(secondaryRaw, Math.max(0, titleCols - primaryCols));
 
   return (
     <Box width={width}>
@@ -202,6 +217,17 @@ export function BranchRow({
       >
         {title}
       </Text>
+
+      {/* dimmed PR title beside the branch name in `both` mode */}
+      {subtitle.length > 0 && (
+        <Text
+          color={lit("gray")}
+          backgroundColor={bg}
+          wrap="truncate-end"
+        >
+          {subtitle}
+        </Text>
+      )}
 
       {/* gap filler so the selection highlight reaches the metadata */}
       <Text backgroundColor={bg}>{" ".repeat(spacerWidth)}</Text>

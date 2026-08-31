@@ -115,6 +115,16 @@ export interface Branch {
   displayTitle: string;
 }
 
+/**
+ * Which label the branch list shows per row. `title` is the PR title (falling
+ * back to the branch name when there is no PR), `branch` is always the branch
+ * name, and `both` shows the branch name with the PR title dimmed beside it.
+ */
+export type LabelMode = "title" | "branch" | "both";
+
+/** Cycle order for the `N` key. */
+export const LABEL_MODES: readonly LabelMode[] = ["title", "branch", "both"];
+
 /** An in-progress rebase that is paused on merge conflicts. */
 export interface RebaseState {
   /** Branch being rebased (the one with conflicts), if known. */

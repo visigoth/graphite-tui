@@ -1,6 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
-import type { PrLiveStatus, RenderRow } from "../types.js";
+import type { LabelMode, PrLiveStatus, RenderRow } from "../types.js";
 import { BranchRow } from "./BranchRow.js";
 import { colors, prBadge } from "./theme.js";
 
@@ -13,6 +13,9 @@ interface Props {
   /** Max width of the rows; bounds where right-aligned metadata sits. */
   width: number;
   titleWidth: number;
+  /** Which label each row shows: PR title, branch name, or both. */
+  labelMode: LabelMode;
+  /** Builds a Graphite URL for a PR number; null when there's no remote. */
   /** First visible branch row. */
   scrollOffset: number;
   /** Number of branch rows that fit. */
@@ -30,6 +33,7 @@ export function StackGraph({
   focused,
   width,
   titleWidth,
+  labelMode,
   scrollOffset,
   visible,
   conflictedBranches,
@@ -80,6 +84,7 @@ export function StackGraph({
             focused={focused}
             width={width}
             titleWidth={titleWidth}
+            labelMode={labelMode}
             prW={prW}
             statusW={statusW}
             ageW={ageW}

@@ -12,10 +12,12 @@ import clipboard from "clipboardy";
 import type {
   Branch,
   ChangedFile,
+  LabelMode,
   PrLiveStatus,
   RenderRow,
   RepoData,
 } from "../types.js";
+import { LABEL_MODES } from "../types.js";
 import type { WorkingFile } from "../data/status.js";
 import type { RepoPaths } from "../data/repo.js";
 import { loadRepoData } from "../data/load.js";
@@ -96,6 +98,8 @@ interface PromptState {
 interface Props {
   initial: RepoData;
   paths: RepoPaths;
+  /** Label shown per branch row at startup; `N` cycles it. */
+  initialLabelMode?: LabelMode;
 }
 
 interface Msg {
@@ -137,7 +141,7 @@ const WORKTREE_VISIBLE = 8;
 /** Basename of a repo-relative path, for concise status messages. */
 const baseName = (p: string) => p.split("/").pop() || p;
 
-export function App({ initial, paths }: Props) {
+export function App({ initial, paths, initialLabelMode = "title" }: Props) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const [data, setData] = useState<RepoData>(initial);
@@ -150,6 +154,12 @@ export function App({ initial, paths }: Props) {
     applyTheme(next);
     setThemeMode(next);
   };
+  // Which label the branch list shows. Cycles title -> branch -> both on `N`.
+  const [labelMode, setLabelMode] = useState<LabelMode>(initialLabelMode);
+  const cycleLabelMode = () =>
+    setLabelMode(
+      (m) => LABEL_MODES[(LABEL_MODES.indexOf(m) + 1) % LABEL_MODES.length]!
+    );
   const [selected, setSelected] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Msg | null>(null);
@@ -648,6 +658,13 @@ export function App({ initial, paths }: Props) {
     // typed characters, so `t` would be swallowed there).
     if (input === "t" && mode !== "input" && mode !== "filter") {
       toggleTheme();
+      return;
+    }
+
+    // Cycle the branch-list label the same way, and for the same reason: text
+    // entry modes swallow plain characters.
+    if (input === "N" && mode !== "input" && mode !== "filter") {
+      cycleLabelMode();
       return;
     }
 
@@ -1409,6 +1426,7 @@ export function App({ initial, paths }: Props) {
           focused={focus === "branches"}
           width={contentWidth}
           titleWidth={titleWidth}
+          labelMode={labelMode}
           scrollOffset={branchOffset}
           visible={branchVisible}
           conflictedBranches={conflictedBranches}
