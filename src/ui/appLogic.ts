@@ -10,7 +10,7 @@ export type Focus = "branches" | "files" | "worktree" | "logs";
 // Keyboard hints as [key, label] pairs so the StatusBar can style the key
 // distinctly from its description.
 export const NORMAL_HINT: Array<[string, string]> = [
-  ["↵", "commit msg"],
+  ["↵", "commits"],
   ["c", "checkout"],
   ["o", "Graphite"],
   ["g", "GitHub"],

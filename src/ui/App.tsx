@@ -19,10 +19,12 @@ import type {
 } from "../types.js";
 import { LABEL_MODES } from "../types.js";
 import type { WorkingFile } from "../data/status.js";
+import type { BranchCommit } from "../data/git.js";
 import type { RepoPaths } from "../data/repo.js";
 import { loadRepoData } from "../data/load.js";
 import {
-  getCommitMessage,
+  getBranchCommits,
+  getCommitDetail,
   githubPrUrl,
   graphitePrUrl,
   graphitePrUrlFor,
@@ -45,6 +47,7 @@ import { StatusBar } from "./StatusBar.js";
 import { HelpOverlay, helpLineCount, helpVisibleRows } from "./HelpOverlay.js";
 import { ErrorOverlay } from "./ErrorOverlay.js";
 import { CommitOverlay } from "./CommitOverlay.js";
+import { CommitListOverlay } from "./CommitListOverlay.js";
 import { ConfirmOverlay } from "./ConfirmOverlay.js";
 import { InputOverlay } from "./InputOverlay.js";
 import { DiffOverlay, diffVisibleRows } from "./DiffOverlay.js";
@@ -73,7 +76,8 @@ type Mode =
   | "error"
   | "input"
   | "diff"
-  | "commit";
+  | "commit"
+  | "commits";
 
 
 /**
@@ -173,18 +177,40 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
   // Full output of the last failed command, viewable via the error overlay.
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [errorScroll, setErrorScroll] = useState(0);
-  // Tip-commit message of the branch `↵` was pressed on, plus its scroll.
+  // The commit `↵` opened, plus its scroll. `fromList` records whether we
+  // arrived via the branch's commit list, so esc knows where to go back to.
   const [commitView, setCommitView] = useState<{
     branch: string;
     text: string | null;
+    fromList: boolean;
   } | null>(null);
   const [commitScroll, setCommitScroll] = useState(0);
+  // The branch's own commits, when it has more than one.
+  const [commitList, setCommitList] = useState<{
+    branch: string;
+    parent: string | null;
+    commits: BranchCommit[];
+  } | null>(null);
+  const [commitIndex, setCommitIndex] = useState(0);
+  const [commitListScroll, setCommitListScroll] = useState(0);
   // Resolve the remote once: graphitePrUrl shells out to git on every
   // call, which is far too expensive to do per row per render.
   const prUrl = useMemo(
     () => graphitePrUrlFor(data.repoRoot),
     [data.repoRoot]
   );
+
+  // Shared by both entry points: the single-commit shortcut and a pick from
+  // the commit list.
+  const openCommit = (branch: string, sha: string, fromList: boolean) => {
+    setCommitView({
+      branch,
+      text: getCommitDetail(data.repoRoot, sha),
+      fromList,
+    });
+    setCommitScroll(0);
+    setMode("commit");
+  };
 
   // `q` quits behind a confirmation; `Q` still quits outright. Defined once
   // so every panel raises the same prompt.
@@ -213,6 +239,7 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
   // Body rows the commit overlay fits: border(2) + paddingY(2) + header(1)
   // + spacer(2) + footer(1), matching CommitOverlay's own layout.
   const commitVisibleRows = Math.max(3, (stdout?.rows ?? 24) - 9);
+  const commitListVisibleRows = Math.max(3, (stdout?.rows ?? 24) - 9);
   const [helpScroll, setHelpScroll] = useState(0);
   const [query, setQuery] = useState("");
 
@@ -746,14 +773,42 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
         ? commitView.text.split("\n").length
         : 0;
       const max = Math.max(0, lineCount - vis);
-      if (key.escape || input === "q") {
+      if (key.escape && commitView?.fromList) {
+        setCommitView(null);
+        setMode("commits");
+      } else if (key.escape || input === "q") {
         setMode("normal");
         setCommitView(null);
+        setCommitList(null);
       } else if (key.upArrow || input === "k") {
         setCommitScroll((s) => Math.max(0, s - 1));
       } else if (key.downArrow || input === "j" || input === " ") {
         const step = input === " " ? Math.max(1, Math.floor(vis / 2)) : 1;
         setCommitScroll((s) => Math.min(max, s + step));
+      }
+      return;
+    }
+    if (mode === "commits") {
+      const all = commitList?.commits ?? [];
+      const vis = commitListVisibleRows;
+      if (key.escape || input === "q") {
+        setMode("normal");
+        setCommitList(null);
+      } else if (key.return) {
+        const picked = all[commitIndex];
+        if (picked && commitList) openCommit(commitList.branch, picked.sha, true);
+      } else if (key.upArrow || input === "k") {
+        setCommitIndex((i) => {
+          const next = Math.max(0, i - 1);
+          setCommitListScroll((s) => Math.min(s, next));
+          return next;
+        });
+      } else if (key.downArrow || input === "j") {
+        setCommitIndex((i) => {
+          const next = Math.min(all.length - 1, i + 1);
+          setCommitListScroll((s) => Math.max(s, next - vis + 1));
+          return next;
+        });
       }
       return;
     }
@@ -1170,19 +1225,27 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
         runAction(`checking out ${name}`, () => gt.checkout(data.repoRoot, name));
       }
     } else if (key.return) {
-      // Show the branch tip's full commit message. Reading a branch is the
-      // common move when scanning a stack, so it gets the cheapest key;
-      // checkout mutates the working tree, so it keeps the explicit `c`.
+      // Inspect the branch. Reading is the common move when scanning a stack,
+      // so it gets the cheapest key; checkout mutates the working tree and
+      // keeps the explicit `c`.
+      //
+      // Branch names are resolved rather than gt's cached revision: git gives
+      // the live tip, and the cached SHA can lag a local commit (and is null
+      // for branches gt has not recorded one for).
       if (selectedRow) {
-        setCommitView({
-          branch: selectedRow.branch.name,
-          // Resolve the branch name rather than the cached revision: git
-          // gives the live tip, and gt's cached SHA can lag a local commit
-          // (and is null for branches it has not recorded one for).
-          text: getCommitMessage(data.repoRoot, selectedRow.branch.name),
-        });
-        setCommitScroll(0);
-        setMode("commit");
+        const b = selectedRow.branch;
+        const commits = getBranchCommits(data.repoRoot, b.name, b.parent);
+        if (commits.length > 1) {
+          setCommitList({ branch: b.name, parent: b.parent, commits });
+          setCommitIndex(0);
+          setCommitListScroll(0);
+          setMode("commits");
+        } else {
+          // One commit (or a branch with no range of its own) has nothing to
+          // choose between — open it directly rather than showing a one-item
+          // menu.
+          openCommit(b.name, commits[0]?.sha ?? b.name, false);
+        }
       }
     } else if (input === "o") {
       openGraphitePr(false, "opening PR");
@@ -1287,6 +1350,19 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
     }
   });
 
+  if (mode === "commits" && commitList)
+    return (
+      <CommitListOverlay
+        branch={commitList.branch}
+        parent={commitList.parent}
+        commits={commitList.commits}
+        selectedIndex={commitIndex}
+        scrollOffset={commitListScroll}
+        visible={commitListVisibleRows}
+        width={stdout?.columns ?? 80}
+      />
+    );
+
   if (mode === "commit" && commitView)
     return (
       <CommitOverlay
@@ -1294,6 +1370,7 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
         text={commitView.text}
         scrollOffset={commitScroll}
         visible={commitVisibleRows}
+        fromList={commitView.fromList}
       />
     );
 

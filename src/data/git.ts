@@ -244,3 +244,73 @@ export function getCommitMessage(
     return null;
   }
 }
+
+/** One entry of a branch's own commit history. */
+export interface BranchCommit {
+  /** Full sha, used to address the commit when fetching its detail. */
+  sha: string;
+  /** Abbreviated sha, as `git log --oneline` prints it. */
+  short: string;
+  subject: string;
+}
+
+/**
+ * The commits a branch adds on top of its parent — the same set the PR shows,
+ * newest first.
+ *
+ * Ranged on the parent *branch name* rather than gt's recorded
+ * `parentBranchRevision`: the recorded revision goes stale the moment the
+ * parent moves, which would list commits the branch does not actually own. A
+ * branch with no parent (trunk, or one gt never tracked) has no meaningful
+ * range, so fall back to its most recent commits and let the caller say so.
+ */
+export function getBranchCommits(
+  repoRoot: string,
+  branch: string,
+  parent: string | null,
+  limit = 200
+): BranchCommit[] {
+  const range = parent ? `${parent}..${branch}` : branch;
+  try {
+    const { stdout } = execaSync(
+      "git",
+      [
+        "log",
+        `--max-count=${limit}`,
+        "--format=%H%x09%h%x09%s",
+        "--no-decorate",
+        range,
+        "--",
+      ],
+      { cwd: repoRoot }
+    );
+    return stdout
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => {
+        const [sha, short, ...rest] = l.split("\t");
+        return { sha: sha!, short: short!, subject: rest.join("\t") };
+      });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Full `git show` text for one commit: the header and message, then the patch
+ * — equivalent to `git log -1 -p`. Rendered by CommitOverlay, which colours it
+ * line by line rather than parsing it, so multi-file patches work unchanged.
+ */
+export function getCommitDetail(repoRoot: string, sha: string): string | null {
+  try {
+    const { stdout } = execaSync(
+      "git",
+      ["show", "--decorate=short", "--no-color", sha, "--"],
+      { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024 }
+    );
+    const text = stdout.trimEnd();
+    return text.length ? text : null;
+  } catch {
+    return null;
+  }
+}
