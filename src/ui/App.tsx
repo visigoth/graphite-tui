@@ -63,6 +63,9 @@ import {
   nextFocus,
   normalHint,
   prNumbersOf,
+  samePrStatus,
+  sameRepoData,
+  sameWorkingFiles,
   undiscoveredPrKey,
   worktreeHint,
 } from "./appLogic.js";
@@ -325,6 +328,13 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
   const [prStatus, setPrStatus] = useState<Map<number, PrLiveStatus>>(
     new Map()
   );
+  // Every `gh` poll builds a new Map, and most polls return exactly what we
+  // already have; swapping in an equal Map would repaint the frame for nothing.
+  const setPrStatusIfChanged = useCallback(
+    (next: Map<number, PrLiveStatus>) =>
+      setPrStatus((prev) => (samePrStatus(prev, next) ? prev : next)),
+    []
+  );
 
   const allRows = useMemo(() => buildRenderRows(data), [data]);
 
@@ -365,9 +375,15 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
   // reload() and never needs to trigger a render on its own.
   const discoveredPrs = useRef<DiscoveredPrs>(new Map());
 
+  // The loaded model, mirrored into a ref so reload/reloadStatus can read the
+  // current value without listing `data` as a dependency — that would rebuild
+  // them on every refresh and tear the file watchers below down with them.
+  const dataRef = useRef(data);
+  dataRef.current = data;
+
   const reload = useCallback((): RepoData | null => {
     try {
-      const { data: fresh } = loadRepoData(data.repoRoot);
+      const { data: fresh } = loadRepoData(dataRef.current.repoRoot);
       // Layer any GitHub-discovered PRs back on top of the fresh cache read
       // (gt's cache stays authoritative where it has an entry).
       applyDiscoveredPrs(fresh, discoveredPrs.current);
@@ -375,20 +391,27 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
       // changedFilesKey), so it's self-invalidating — clearing it here would
       // make the selected branch's diff flicker (loading→repopulate) on every
       // watcher tick. Stale keys just go unused.
+      //
+      // A watcher tick frequently reports churn that left the model identical.
+      // `fresh` is a new object either way, so handing it to setData would
+      // repaint the whole frame for nothing; keep the previous one instead.
+      if (sameRepoData(dataRef.current, fresh)) return dataRef.current;
       setData(fresh);
       return fresh;
     } catch {
       /* transient (gt mid-write); next watch tick will retry */
       return null;
     }
-  }, [data.repoRoot]);
+  }, []);
 
   // Refresh the working-tree status. Best-effort; failures leave the last
   // known state in place (the next trigger retries).
   const reloadStatus = useCallback(async () => {
-    const files = await getWorkingStatus(data.repoRoot);
-    setWorktree(files);
-  }, [data.repoRoot]);
+    const files = await getWorkingStatus(dataRef.current.repoRoot);
+    // Same reasoning as reload(): a fresh list equal to the one on screen must
+    // not become a new state value, or every status poll repaints the frame.
+    setWorktree((prev) => (sameWorkingFiles(prev, files) ? prev : files));
+  }, []);
 
   // `busy` (a gt action running in-process) is read through a ref so toggling it
   // doesn't tear down and rebuild the watchers below; it gates their callbacks.
@@ -462,6 +485,10 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
   // changes, so they're only offered when something is actually staged.
   const hasStaged = worktree.some((f) => f.staged);
   const fileKey = selBranch ? changedFilesKey(selBranch, data.branches) : "";
+  // Mirrored so the background warm loop below can tell whether the entry it
+  // just cached is the one on screen.
+  const fileKeyRef = useRef(fileKey);
+  fileKeyRef.current = fileKey;
 
   // Files for the selected branch, derived from the cache. `undefined` means
   // not loaded yet → show a (rare, brief) loading state.
@@ -561,7 +588,10 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
         const result = await getChangedFiles(data.repoRoot, b.parent, b.name);
         if (cancelled) return;
         filesCache.current.set(key, result);
-        setCacheTick((t) => t + 1);
+        // Only the selected branch's entry is on screen, so only that one is
+        // worth a re-render; ticking for each of the others would repaint the
+        // whole frame once per branch in the repo while the cache warms.
+        if (key === fileKeyRef.current) setCacheTick((t) => t + 1);
       }
     })();
     return () => {
@@ -574,13 +604,13 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
   // GitHub (Graphite doesn't cache it), so unlike everything else it isn't
   // covered by the file watcher.
   const refreshPrStatus = useCallback(
-    async (repo: RepoData = data) => {
+    async (repo: RepoData = dataRef.current) => {
       const prNumbers = prNumbersOf(repo);
       if (!prNumbers.length) return;
       const status = await fetchPrStatus(repo.repoRoot, prNumbers);
-      if (status.size > 0) setPrStatus(status);
+      if (status.size > 0) setPrStatusIfChanged(status);
     },
-    [data]
+    [setPrStatusIfChanged]
   );
 
   // Re-fetch when the set of PR numbers changes (initial load, branch gains or
@@ -596,13 +626,13 @@ export function App({ initial, paths, initialLabelMode = "title" }: Props) {
     let cancelled = false;
     (async () => {
       const status = await fetchPrStatus(data.repoRoot, prNumbers);
-      if (!cancelled && status.size > 0) setPrStatus(status);
+      if (!cancelled && status.size > 0) setPrStatusIfChanged(status);
     })();
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prNumberKey, data.repoRoot]);
+  }, [prNumberKey, data.repoRoot, setPrStatusIfChanged]);
 
   // Discover PRs from GitHub for tracked branches gt hasn't cached (e.g. a
   // freshly `gt track`ed branch whose PR only exists on GitHub). Only branches

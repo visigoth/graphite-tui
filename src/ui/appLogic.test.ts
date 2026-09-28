@@ -8,10 +8,19 @@ import {
   nextFocus,
   normalHint,
   prNumbersOf,
+  samePrStatus,
+  sameRepoData,
+  sameWorkingFiles,
   undiscoveredPrKey,
   worktreeHint,
 } from "./appLogic.js";
-import type { Branch, PrInfo, RepoData } from "../types.js";
+import type {
+  Branch,
+  PrInfo,
+  PrLiveStatus,
+  RepoData,
+} from "../types.js";
+import type { WorkingFile } from "../data/status.js";
 
 function b(partial: Partial<Branch> & { name: string }): Branch {
   return {
@@ -298,5 +307,138 @@ describe("undiscoveredPrKey", () => {
     ]);
     const branches = [b({ name: "found" }), b({ name: "nopr" }), b({ name: "fresh" })];
     expect(undiscoveredPrKey(branches, queried)).toBe("fresh");
+  });
+});
+
+function wf(partial: Partial<WorkingFile> & { path: string }): WorkingFile {
+  return {
+    index: "M",
+    worktree: " ",
+    staged: true,
+    unstaged: false,
+    untracked: false,
+    additions: 1,
+    deletions: 0,
+    ...partial,
+  };
+}
+
+function live(partial: Partial<PrLiveStatus> = {}): PrLiveStatus {
+  return {
+    threads: { total: 2, resolved: 1 },
+    ci: "passed",
+    mergeable: "mergeable",
+    state: "OPEN",
+    reviewDecision: null,
+    ...partial,
+  };
+}
+
+describe("sameRepoData", () => {
+  it("treats two independently built but identical models as equal", () => {
+    const a = repo([b({ name: "trunk", isTrunk: true }), b({ name: "x", parent: "trunk", pr: pr(7) })]);
+    const z = repo([b({ name: "trunk", isTrunk: true }), b({ name: "x", parent: "trunk", pr: pr(7) })]);
+    expect(a).not.toBe(z);
+    expect(sameRepoData(a, z)).toBe(true);
+  });
+
+  it("notices a changed branch revision", () => {
+    const a = repo([b({ name: "x", revision: "aaa" })]);
+    const z = repo([b({ name: "x", revision: "bbb" })]);
+    expect(sameRepoData(a, z)).toBe(false);
+  });
+
+  it("notices a changed PR field", () => {
+    const a = repo([b({ name: "x", pr: pr(7) })]);
+    const z = repo([b({ name: "x", pr: { ...pr(7), state: "MERGED" } })]);
+    expect(sameRepoData(a, z)).toBe(false);
+  });
+
+  it("notices a branch gaining or losing a PR", () => {
+    const a = repo([b({ name: "x" })]);
+    const z = repo([b({ name: "x", pr: pr(7) })]);
+    expect(sameRepoData(a, z)).toBe(false);
+  });
+
+  it("notices added, removed, and renamed branches", () => {
+    const one = repo([b({ name: "x" })]);
+    expect(sameRepoData(one, repo([b({ name: "x" }), b({ name: "y" })]))).toBe(false);
+    expect(sameRepoData(one, repo([b({ name: "y" })]))).toBe(false);
+  });
+
+  it("notices top-level changes: current branch, trunk, and fetch time", () => {
+    const base = repo([b({ name: "x" })]);
+    expect(sameRepoData(base, { ...base, currentBranch: "x" })).toBe(false);
+    expect(sameRepoData(base, { ...base, trunk: "main" })).toBe(false);
+    expect(sameRepoData(base, { ...base, lastFetchedPrInfoMs: 1 })).toBe(false);
+  });
+
+  it("notices a rebase starting, moving, and finishing", () => {
+    const clean = repo([b({ name: "x" })]);
+    const stuck = { ...clean, rebase: { branch: "x", files: ["a"] } };
+    expect(sameRepoData(clean, stuck)).toBe(false);
+    expect(sameRepoData(stuck, { ...clean, rebase: { branch: "x", files: ["a"] } })).toBe(true);
+    expect(sameRepoData(stuck, { ...clean, rebase: { branch: "x", files: ["a", "b"] } })).toBe(false);
+    expect(sameRepoData(stuck, { ...clean, rebase: { branch: "y", files: ["a"] } })).toBe(false);
+  });
+
+  it("notices a changed child list even when the parents match", () => {
+    const a = repo([b({ name: "x", children: ["c1"] })]);
+    const z = repo([b({ name: "x", children: ["c1", "c2"] })]);
+    expect(sameRepoData(a, z)).toBe(false);
+  });
+});
+
+describe("sameWorkingFiles", () => {
+  it("treats identical lists from separate git runs as equal", () => {
+    expect(sameWorkingFiles([wf({ path: "a" })], [wf({ path: "a" })])).toBe(true);
+  });
+
+  it("notices a different length, path, or ordering", () => {
+    expect(sameWorkingFiles([wf({ path: "a" })], [])).toBe(false);
+    expect(sameWorkingFiles([wf({ path: "a" })], [wf({ path: "b" })])).toBe(false);
+    expect(
+      sameWorkingFiles(
+        [wf({ path: "a" }), wf({ path: "b" })],
+        [wf({ path: "b" }), wf({ path: "a" })]
+      )
+    ).toBe(false);
+  });
+
+  it("notices a staged/unstaged change to the same path", () => {
+    expect(
+      sameWorkingFiles(
+        [wf({ path: "a", staged: true, unstaged: false })],
+        [wf({ path: "a", staged: false, unstaged: true })]
+      )
+    ).toBe(false);
+  });
+
+  it("notices changed line counts", () => {
+    expect(
+      sameWorkingFiles([wf({ path: "a", additions: 1 })], [wf({ path: "a", additions: 2 })])
+    ).toBe(false);
+  });
+});
+
+describe("samePrStatus", () => {
+  it("treats identical maps from separate polls as equal", () => {
+    expect(samePrStatus(new Map([[1, live()]]), new Map([[1, live()]]))).toBe(true);
+  });
+
+  it("notices a different size or PR number", () => {
+    expect(samePrStatus(new Map([[1, live()]]), new Map())).toBe(false);
+    expect(samePrStatus(new Map([[1, live()]]), new Map([[2, live()]]))).toBe(false);
+  });
+
+  it("notices changed CI, mergeability, state, review, and thread counts", () => {
+    const base = new Map([[1, live()]]);
+    const differs = (p: Partial<PrLiveStatus>) =>
+      samePrStatus(base, new Map([[1, live(p)]]));
+    expect(differs({ ci: "failed" })).toBe(false);
+    expect(differs({ mergeable: "conflicting" })).toBe(false);
+    expect(differs({ state: "MERGED" })).toBe(false);
+    expect(differs({ reviewDecision: "APPROVED" })).toBe(false);
+    expect(differs({ threads: { total: 2, resolved: 2 } })).toBe(false);
   });
 });

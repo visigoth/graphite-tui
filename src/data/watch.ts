@@ -32,6 +32,20 @@ function debounced(
 }
 
 /**
+ * Git takes `<file>.lock` next to any file it is *about* to rewrite and removes
+ * it again afterwards — including for a plain read-only `git status`, which
+ * claims `index.lock` just to consider refreshing the index stat cache. Both
+ * the create and the delete surface as events on the watched `.git` directory,
+ * so reacting to them would feed our own git calls straight back into the
+ * watcher: reload → `git status` → index.lock → reload, forever, repainting the
+ * whole frame every ~150ms. Nothing is lost by dropping them — a lock that
+ * precedes a real change is always followed by an event on the file itself.
+ */
+export function isLockFile(filename: string | Buffer | null): boolean {
+  return filename !== null && filename.toString().endsWith(".lock");
+}
+
+/**
  * Watch Graphite's cache files + HEAD and invoke `onChange` (debounced) when
  * any of them change, so the TUI reflects `gt` activity from other terminals.
  */
@@ -51,7 +65,10 @@ export function watchRepo(paths: RepoPaths, onChange: () => void): () => void {
 
   for (const t of targets) {
     try {
-      const w = watch(t, fire);
+      const w = watch(t, (_event, filename) => {
+        if (isLockFile(filename)) return;
+        fire();
+      });
       w.on("error", () => {});
       watchers.push(w);
     } catch {

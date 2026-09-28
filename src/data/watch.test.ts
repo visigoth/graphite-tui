@@ -1,8 +1,16 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, watch } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  unlinkSync,
+  watch,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { watchWorkingTree } from "./watch.js";
+import { isLockFile, watchRepo, watchWorkingTree } from "./watch.js";
+import type { RepoPaths } from "./repo.js";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -68,5 +76,74 @@ describe("watchWorkingTree", () => {
     await wait(2000); // let the trailing refresh land
     expect(fires).toBeGreaterThanOrEqual(1);
     expect(fires).toBeLessThanOrEqual(3);
+  });
+});
+
+describe("isLockFile", () => {
+  it("matches git's transient write locks and nothing else", () => {
+    expect(isLockFile("index.lock")).toBe(true);
+    expect(isLockFile("HEAD.lock")).toBe(true);
+    expect(isLockFile("index")).toBe(false);
+    expect(isLockFile("HEAD")).toBe(false);
+    expect(isLockFile(".graphite_metadata.db")).toBe(false);
+    // fs.watch types the filename as string | Buffer | null; a missing name
+    // can't be classified, a Buffer one still can.
+    expect(isLockFile(null)).toBe(false);
+    expect(isLockFile(Buffer.from("index.lock"))).toBe(true);
+  });
+});
+
+describe("watchRepo", () => {
+  /** A RepoPaths pointing at a throwaway .git, with the files gt would have. */
+  function fixture(): { paths: RepoPaths; gitDir: string } {
+    const root = mkdtempSync(join(tmpdir(), "wr-"));
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    const gitDir = join(root, ".git");
+    mkdirSync(gitDir);
+    const paths: RepoPaths = {
+      repoRoot: root,
+      gitDir,
+      metadataDb: join(gitDir, ".graphite_metadata.db"),
+      prInfo: join(gitDir, ".graphite_pr_info"),
+      repoConfig: join(gitDir, ".graphite_repo_config"),
+      head: join(gitDir, "HEAD"),
+      index: join(gitDir, "index"),
+    };
+    for (const f of [
+      paths.metadataDb,
+      paths.prInfo,
+      paths.repoConfig,
+      paths.head,
+      paths.index,
+    ])
+      writeFileSync(f, "x");
+    return { paths, gitDir };
+  }
+
+  // The loop this guards against: our own `git status` takes and releases
+  // .git/index.lock, which the .git-directory watch would otherwise report,
+  // triggering a reload that runs `git status` again — forever.
+  it("ignores git's index.lock churn", async () => {
+    const { paths, gitDir } = fixture();
+    let fires = 0;
+    cleanups.push(watchRepo(paths, () => fires++));
+
+    const lock = join(gitDir, "index.lock");
+    for (let i = 0; i < 3; i++) {
+      writeFileSync(lock, "");
+      unlinkSync(lock);
+      await wait(250);
+    }
+    expect(fires).toBe(0);
+  });
+
+  it("still fires when Graphite's metadata actually changes", async () => {
+    const { paths } = fixture();
+    let fires = 0;
+    cleanups.push(watchRepo(paths, () => fires++));
+
+    writeFileSync(paths.metadataDb, "changed");
+    await wait(400);
+    expect(fires).toBeGreaterThanOrEqual(1);
   });
 });

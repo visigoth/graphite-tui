@@ -2,7 +2,14 @@
 // rendering the component. These hold no React state — they map inputs
 // (selection, panel visibility, repo data) to hint rows, focus targets, and
 // cache keys.
-import type { Branch, PrInfo, RepoData } from "../types.js";
+import type {
+  Branch,
+  PrInfo,
+  PrLiveStatus,
+  RebaseState,
+  RepoData,
+} from "../types.js";
+import type { WorkingFile } from "../data/status.js";
 
 /** Which panel currently has keyboard focus. */
 export type Focus = "branches" | "files" | "worktree" | "logs";
@@ -191,4 +198,129 @@ export function undiscoveredPrKey(
     if (!b.isTrunk && !b.pr && !queried.has(b.name)) names.push(b.name);
   }
   return names.sort().join("\n");
+}
+
+/**
+ * Structural equality for the loaded model, used to decide whether a reload is
+ * worth a re-render.
+ *
+ * Every reload builds a brand-new `RepoData`, so handing it to `setData`
+ * unconditionally repaints the entire frame even when the repo is byte-for-byte
+ * unchanged — and reloads are triggered by file watchers, which fire on plenty
+ * of churn that leaves the model identical (a ref write that didn't move a
+ * branch, an unrelated tool touching `.git`). Comparing first turns those into
+ * no-ops, which is what keeps the UI still while nothing is happening.
+ */
+export function sameRepoData(a: RepoData, b: RepoData): boolean {
+  if (
+    a.repoRoot !== b.repoRoot ||
+    a.trunk !== b.trunk ||
+    a.currentBranch !== b.currentBranch ||
+    a.lastFetchedPrInfoMs !== b.lastFetchedPrInfoMs ||
+    a.branches.size !== b.branches.size
+  )
+    return false;
+  if (!sameRebase(a.rebase, b.rebase)) return false;
+  for (const [name, ab] of a.branches) {
+    const bb = b.branches.get(name);
+    if (!bb || !sameBranch(ab, bb)) return false;
+  }
+  return true;
+}
+
+function sameRebase(a: RebaseState | null, b: RebaseState | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.branch === b.branch && sameStrings(a.files, b.files);
+}
+
+function sameStrings(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+function sameBranch(a: Branch, b: Branch): boolean {
+  return (
+    a.name === b.name &&
+    a.parent === b.parent &&
+    a.revision === b.revision &&
+    a.isTrunk === b.isTrunk &&
+    a.needsRestack === b.needsRestack &&
+    a.state === b.state &&
+    a.age === b.age &&
+    a.ahead === b.ahead &&
+    a.behind === b.behind &&
+    a.upstreamGone === b.upstreamGone &&
+    a.unpushed === b.unpushed &&
+    a.displayTitle === b.displayTitle &&
+    sameStrings(a.children, b.children) &&
+    samePrInfo(a.pr, b.pr)
+  );
+}
+
+function samePrInfo(a: PrInfo | null, b: PrInfo | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.prNumber === b.prNumber &&
+    a.title === b.title &&
+    a.state === b.state &&
+    a.reviewDecision === b.reviewDecision &&
+    a.isDraft === b.isDraft &&
+    a.url === b.url &&
+    a.headRefName === b.headRefName &&
+    a.baseRefName === b.baseRefName &&
+    a.authorGithubHandle === b.authorGithubHandle
+  );
+}
+
+/**
+ * Structural equality for the working-tree file list. Same purpose as
+ * {@link sameRepoData}: `git status` returns fresh objects every run, and the
+ * tree is usually unchanged between runs.
+ */
+export function sameWorkingFiles(
+  a: readonly WorkingFile[],
+  b: readonly WorkingFile[]
+): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((f, i) => {
+    const g = b[i]!;
+    return (
+      f.path === g.path &&
+      f.origPath === g.origPath &&
+      f.index === g.index &&
+      f.worktree === g.worktree &&
+      f.staged === g.staged &&
+      f.unstaged === g.unstaged &&
+      f.untracked === g.untracked &&
+      f.additions === g.additions &&
+      f.deletions === g.deletions
+    );
+  });
+}
+
+/**
+ * Structural equality for the live per-PR status map. Same purpose as
+ * {@link sameRepoData}: every `gh` poll builds a new Map, and the polls
+ * (terminal focus, post-action refresh) usually return what we already have.
+ */
+export function samePrStatus(
+  a: ReadonlyMap<number, PrLiveStatus>,
+  b: ReadonlyMap<number, PrLiveStatus>
+): boolean {
+  if (a.size !== b.size) return false;
+  for (const [n, as] of a) {
+    const bs = b.get(n);
+    if (
+      !bs ||
+      as.ci !== bs.ci ||
+      as.mergeable !== bs.mergeable ||
+      as.state !== bs.state ||
+      as.reviewDecision !== bs.reviewDecision ||
+      as.threads.total !== bs.threads.total ||
+      as.threads.resolved !== bs.threads.resolved
+    )
+      return false;
+  }
+  return true;
 }
